@@ -56,9 +56,32 @@ public enum MenuText {
         return Row(primary: primary, secondary: secondary)
     }
 
-    /// The text beside the paw in the menu bar. nil when there's nothing to report.
+    /// Single worst percentage across everything. Used by `--dump` and the tooltip.
+    /// Deliberately NOT shown in the menu bar: one number can't stand in for three
+    /// windows, and a summary you have to click anyway is just clutter.
     public static func statusTitle(_ snapshots: [ProviderSnapshot]) -> String? {
         guard let worst = snapshots.compactMap(\.worstUsedPercent).max() else { return nil }
         return Format.percent(worst)
+    }
+
+    /// Hover text: all three windows on separate lines, so a hover answers the
+    /// question without a click.
+    public static func tooltip(_ snapshots: [ProviderSnapshot]) -> String {
+        var lines: [String] = []
+        for snapshot in snapshots {
+            switch snapshot.state {
+            case .ok(_, let windows, _) where !windows.isEmpty:
+                for window in windows {
+                    lines.append("\(snapshot.name) \(window.label): \(Format.percent(window.remainingPercent)) left")
+                }
+            case .notConnected:
+                lines.append("\(snapshot.name): not connected")
+            case .failed:
+                lines.append("\(snapshot.name): couldn't check")
+            default:
+                lines.append("\(snapshot.name): checking…")
+            }
+        }
+        return lines.isEmpty ? "PuppyBar" : lines.joined(separator: "\n")
     }
 }

@@ -80,6 +80,8 @@ Returns `rate_limit.primary_window` with `used_percent`, `limit_window_seconds`,
 | D5 | Paw drawn in code as a template image | Shipping a PNG asset | Crisp at any scale, and template mode auto-inverts for light/dark menu bars. |
 | D6 | ChatGPT shows weekly only | Also showing a session window | OpenAI consumer plans are weekly-only; `secondary_window` came back `null` on this account. The parser handles it if it ever appears. |
 | D7 | No desktop notifications in v1 | 80%/95% alerts like AIQuotaBar | `UNUserNotificationCenter` is unreliable for an unsigned, non-notarised local build. Better to ship nothing than a half-working alert. Revisit if the app gets signed. |
+| D8 | Menu bar shows the paw only — no percentage | Worst-case % beside the paw | KP tracks three windows (Claude session, Claude weekly, ChatGPT weekly) and needs all three, so he clicks regardless. One number can't represent three and just adds noise. All three now live in the hover tooltip for a no-click peek. |
+| D9 | Menu items are `isEnabled = true` with `menu.autoenablesItems = false` | Disabled non-interactive items | macOS dims disabled items regardless of the foreground colour set on the attributed title, which made the CLAUDE / CHATGPT headings look greyed out. A nil action keeps them inert while the text renders at full strength. |
 
 ## 6. Current State
 
@@ -101,6 +103,7 @@ Returns `rate_limit.primary_window` with `used_percent`, `limit_window_seconds`,
 | K2 | Ad-hoc code signature changes on every rebuild, so macOS may re-prompt for Keychain access after `./build.sh install`. Harmless; click Allow. | Low |
 | K3 | Unsigned/non-notarised. First launch from `/Applications` may need right-click → Open. | Low |
 | K4 | Each Claude poll costs ~1 Haiku output token. At a 5-minute interval that's ~288 tokens/day. Negligible, but it is not literally free. | Low |
+| K5 | The rendered menu has not been inspected as pixels — no screen-capture access in the build session. Typography and contrast were fixed at the cause (K/D9) and verified through `--dump` text, which shares one rendering source with the menu, but the final look is unconfirmed. | Low — ask KP to eyeball |
 
 ## 8. Testing
 

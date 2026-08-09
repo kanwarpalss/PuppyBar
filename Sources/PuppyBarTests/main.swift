@@ -204,4 +204,30 @@ T.group("severity") {
             "ok-but-empty contributes no number")
 }
 
+// ---------------------------------------------------------------------------
+// Menu bar tooltip — the no-click peek at all three windows
+// ---------------------------------------------------------------------------
+T.group("tooltip") {
+    let claude = ProviderSnapshot(name: "Claude", state: .ok(planLabel: nil, windows: [
+        Window(label: "Session (5h)", usedPercent: 38, resetsAt: nil),
+        Window(label: "Weekly (7d)", usedPercent: 21, resetsAt: nil),
+    ], rateLimited: false), fetchedAt: Date())
+    let chatgpt = ProviderSnapshot(name: "ChatGPT", state: .ok(planLabel: "Plus", windows: [
+        Window(label: "Weekly (7d)", usedPercent: 7, resetsAt: nil),
+    ], rateLimited: false), fetchedAt: Date())
+
+    let tip = MenuText.tooltip([claude, chatgpt])
+    T.eq(tip.split(separator: "\n").count, 3, "all three windows appear in the tooltip")
+    T.check(tip.contains("Claude Session (5h): 62% left"), "claude session line")
+    T.check(tip.contains("Claude Weekly (7d): 79% left"), "claude weekly line")
+    T.check(tip.contains("ChatGPT Weekly (7d): 93% left"), "chatgpt weekly line")
+
+    let disconnected = ProviderSnapshot(name: "Claude", state: .notConnected("x"), fetchedAt: nil)
+    T.check(MenuText.tooltip([disconnected]).contains("not connected"),
+            "disconnected provider says so rather than vanishing")
+    T.check(MenuText.tooltip([ProviderSnapshot(name: "Claude", state: .failed("x"), fetchedAt: nil)])
+        .contains("couldn't check"), "failed provider says so")
+    T.eq(MenuText.tooltip([]), "PuppyBar", "empty tooltip falls back to the app name")
+}
+
 T.report()

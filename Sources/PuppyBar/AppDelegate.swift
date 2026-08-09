@@ -28,6 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.delegate = self
+        // macOS dims disabled items regardless of the colours we set, which made the
+        // provider headings look greyed out. Managing enablement ourselves keeps the
+        // text at full strength.
+        menu.autoenablesItems = false
         statusItem.menu = menu
         rebuildMenu()
 
@@ -67,16 +71,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// The menu bar shows the single most urgent number across everything.
+    /// Just the paw. No percentage: there are three windows worth knowing and no single
+    /// number represents them, so the menu bar stays clean and the detail lives one click away.
+    /// The hover tooltip carries all three lines for a no-click peek.
     private func updateStatusTitle() {
         let ordered = providers.compactMap { snapshots[$0.name] }
-        guard let title = MenuText.statusTitle(ordered) else {
-            statusItem.button?.title = ""
-            statusItem.button?.toolTip = "PuppyBar — not connected yet"
-            return
-        }
-        statusItem.button?.title = " " + title
-        statusItem.button?.toolTip = "PuppyBar — highest usage across Claude and ChatGPT"
+        statusItem.button?.title = ""
+        statusItem.button?.toolTip = MenuText.tooltip(ordered)
     }
 
     // MARK: - Menu
@@ -90,7 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let section = MenuText.section(for: snapshot, now: now)
             menu.addItem(headerItem(title: section.header))
             for row in section.rows {
-                menu.addItem(row.secondary == nil ? detailItem(row.primary, wrap: true) : rowItem(row))
+                menu.addItem(row.secondary == nil
+                    ? detailItem(row.primary, wrap: true, prominent: true)
+                    : rowItem(row))
             }
             menu.addItem(.separator())
         }
@@ -123,11 +126,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func headerItem(title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.isEnabled = false
+        item.isEnabled = true // full-strength text; nil action means it still does nothing
         item.attributedTitle = NSAttributedString(string: title, attributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-            .foregroundColor: NSColor.secondaryLabelColor,
-            .kern: 0.8,
+            .font: NSFont.systemFont(ofSize: 13, weight: .bold),
+            .foregroundColor: NSColor.labelColor,
+            .kern: 0.6,
         ])
         return item
     }
@@ -137,29 +140,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let line2 = row.secondary ?? ""
 
         let item = NSMenuItem(title: line1, action: nil, keyEquivalent: "")
-        item.isEnabled = false
+        item.isEnabled = true
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.paragraphSpacingBefore = 1
         let text = NSMutableAttributedString(string: line1 + "\n" + line2)
+        // NSRange works in UTF-16 units; line1 contains emoji, so .count would misalign
+        // the ranges and colour the wrong characters.
+        let split = (line1 as NSString).length
         text.addAttributes([
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+            .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .medium),
             .foregroundColor: NSColor.labelColor,
-        ], range: NSRange(location: 0, length: line1.count))
+            .paragraphStyle: paragraph,
+        ], range: NSRange(location: 0, length: split))
         text.addAttributes([
-            .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular),
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
             .foregroundColor: NSColor.secondaryLabelColor,
-        ], range: NSRange(location: line1.count + 1, length: line2.count))
+            .paragraphStyle: paragraph,
+        ], range: NSRange(location: split + 1, length: (line2 as NSString).length))
         item.attributedTitle = text
         return item
     }
 
-    private func detailItem(_ text: String, wrap: Bool = false) -> NSMenuItem {
+    /// `prominent` is for things the user must actually read (e.g. "Not connected").
+    /// Quiet footnotes like "Updated 4s ago" stay secondary.
+    private func detailItem(_ text: String, wrap: Bool = false, prominent: Bool = false) -> NSMenuItem {
         let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-        item.isEnabled = false
+        item.isEnabled = true
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = wrap ? .byWordWrapping : .byTruncatingTail
-        if wrap { paragraph.maximumLineHeight = 15 }
         item.attributedTitle = NSAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .font: NSFont.systemFont(ofSize: prominent ? 12.5 : 11,
+                                     weight: prominent ? .medium : .regular),
+            .foregroundColor: prominent ? NSColor.labelColor : NSColor.secondaryLabelColor,
             .paragraphStyle: paragraph,
         ])
         return item
