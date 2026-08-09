@@ -12,15 +12,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let providers: [UsageProvider] = [AnthropicProvider(), OpenAIProvider()]
     private var snapshots: [String: ProviderSnapshot] = [:]
     private var isRefreshing = false
+    private var isMenuOpen = false
 
-    /// Background poll interval. Each Claude poll costs ~1 Haiku token, so we stay gentle;
-    /// opening the menu always triggers a fresh fetch anyway.
+    /// Background poll interval. Each Claude poll costs ~1 Haiku token, so we stay gentle.
     private let pollInterval: TimeInterval = 300
+    /// Reopening the menu within this window reuses cached data instead of re-fetching,
+    /// so the dropdown doesn't visibly resize on every single open.
+    private let staleAfter: TimeInterval = 20
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installMainMenuForTextEditing()
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = PawIcon.image()
-        statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.imagePosition = .imageOnly // no reserved space for a title we never set
         statusItem.button?.toolTip = "PuppyBar — AI usage at a glance"
 
         for provider in providers {
@@ -28,28 +33,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.delegate = self
-        // macOS dims disabled items regardless of the colours we set, which made the
-        // provider headings look greyed out. Managing enablement ourselves keeps the
-        // text at full strength.
-        menu.autoenablesItems = false
         statusItem.menu = menu
         rebuildMenu()
 
-        refresh()
+        performRefresh(forceRebuild: true)
         refreshTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            self?.refresh()
+            // A background tick shouldn't resize the dropdown while it's open on screen;
+            // the numbers will simply be current the next time it's opened.
+            self?.performRefresh(forceRebuild: false)
         }
     }
 
-    // Fresh numbers the moment the paws are clicked.
+    /// Menu-bar-only apps have no visible menu bar of their own, so without this, macOS
+    /// has nowhere to register ⌘C / ⌘V / ⌘A — they silently do nothing in the Connect
+    /// Claude field. The menu itself is never shown; it exists purely so AppKit can route
+    /// these key equivalents to whatever text field is focused.
+    private func installMainMenuForTextEditing() {
+        let mainMenu = NSMenu()
+
+        let appItem = NSMenuItem()
+        mainMenu.addItem(appItem)
+        let appMenu = NSMenu()
+        appItem.submenu = appMenu
+        appMenu.addItem(withTitle: "Quit PuppyBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+
+        NSApp.mainMenu = mainMenu
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
-        rebuildMenu()
-        refresh()
+        isMenuOpen = true
+        rebuildMenu() // paint instantly from whatever we already have — no network wait
+        if isAnyProviderStale() {
+            performRefresh(forceRebuild: true)
+        }
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
+    }
+
+    private func isAnyProviderStale() -> Bool {
+        providers.contains { provider in
+            guard let fetchedAt = snapshots[provider.name]?.fetchedAt else { return true }
+            return Date().timeIntervalSince(fetchedAt) > staleAfter
+        }
     }
 
     // MARK: - Polling
 
-    @objc func refresh() {
+    @objc private func refreshNow() {
+        performRefresh(forceRebuild: true)
+    }
+
+    private func performRefresh(forceRebuild: Bool) {
         guard !isRefreshing else { return }
         isRefreshing = true
 
@@ -65,18 +110,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         group.notify(queue: .main) { [weak self] in
-            self?.isRefreshing = false
-            self?.rebuildMenu()
-            self?.updateStatusTitle()
+            guard let self else { return }
+            self.isRefreshing = false
+            self.updateStatusTitle()
+            // A refresh the user asked for (open, "Refresh Now") always repaints. A quiet
+            // background tick only repaints if the menu isn't open to look at right now —
+            // otherwise the rows would resize mid-glance.
+            if forceRebuild || !self.isMenuOpen {
+                self.rebuildMenu()
+            }
         }
     }
 
-    /// Just the paw. No percentage: there are three windows worth knowing and no single
-    /// number represents them, so the menu bar stays clean and the detail lives one click away.
-    /// The hover tooltip carries all three lines for a no-click peek.
+    /// Just the paw — no percentage. Three windows matter equally, so no single number
+    /// stands in for all of them; the tooltip carries all three for a no-click peek.
     private func updateStatusTitle() {
         let ordered = providers.compactMap { snapshots[$0.name] }
-        statusItem.button?.title = ""
         statusItem.button?.toolTip = MenuText.tooltip(ordered)
     }
 
@@ -88,19 +137,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         for provider in providers {
             let snapshot = snapshots[provider.name] ?? ProviderSnapshot(name: provider.name, state: .idle, fetchedAt: nil)
-            let section = MenuText.section(for: snapshot, now: now)
-            menu.addItem(headerItem(title: section.header))
-            for row in section.rows {
-                menu.addItem(row.secondary == nil
-                    ? detailItem(row.primary, wrap: true, prominent: true)
-                    : rowItem(row))
-            }
+            let sectionItem = NSMenuItem()
+            sectionItem.view = ProviderSectionView(snapshot: snapshot, now: now)
+            menu.addItem(sectionItem)
             menu.addItem(.separator())
         }
 
-        menu.addItem(detailItem("Updated \(Format.relativeAge(latestFetch(), now: now))"))
+        menu.addItem(footnote("Updated \(Format.relativeAge(latestFetch(), now: now))"))
 
-        let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(refresh), keyEquivalent: "r")
+        let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.target = self
         menu.addItem(refreshItem)
 
@@ -116,64 +161,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(loginItem)
 
         menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "Quit PuppyBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quitItem)
+        menu.addItem(NSMenuItem(title: "Quit PuppyBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     private func latestFetch() -> Date? {
         snapshots.values.compactMap(\.fetchedAt).max()
     }
 
-    private func headerItem(title: String) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.isEnabled = true // full-strength text; nil action means it still does nothing
-        item.attributedTitle = NSAttributedString(string: title, attributes: [
-            .font: NSFont.systemFont(ofSize: 13, weight: .bold),
-            .foregroundColor: NSColor.labelColor,
-            .kern: 0.6,
-        ])
-        return item
-    }
-
-    private func rowItem(_ row: MenuText.Row) -> NSMenuItem {
-        let line1 = row.primary
-        let line2 = row.secondary ?? ""
-
-        let item = NSMenuItem(title: line1, action: nil, keyEquivalent: "")
-        item.isEnabled = true
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.paragraphSpacingBefore = 1
-        let text = NSMutableAttributedString(string: line1 + "\n" + line2)
-        // NSRange works in UTF-16 units; line1 contains emoji, so .count would misalign
-        // the ranges and colour the wrong characters.
-        let split = (line1 as NSString).length
-        text.addAttributes([
-            .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .medium),
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: paragraph,
-        ], range: NSRange(location: 0, length: split))
-        text.addAttributes([
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-            .foregroundColor: NSColor.secondaryLabelColor,
-            .paragraphStyle: paragraph,
-        ], range: NSRange(location: split + 1, length: (line2 as NSString).length))
-        item.attributedTitle = text
-        return item
-    }
-
-    /// `prominent` is for things the user must actually read (e.g. "Not connected").
-    /// Quiet footnotes like "Updated 4s ago" stay secondary.
-    private func detailItem(_ text: String, wrap: Bool = false, prominent: Bool = false) -> NSMenuItem {
+    /// A true footnote — native dimmed style is the correct, expected look here,
+    /// unlike the provider content above, which the user actually needs to read.
+    private func footnote(_ text: String) -> NSMenuItem {
         let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-        item.isEnabled = true
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = wrap ? .byWordWrapping : .byTruncatingTail
-        item.attributedTitle = NSAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: prominent ? 12.5 : 11,
-                                     weight: prominent ? .medium : .regular),
-            .foregroundColor: prominent ? NSColor.labelColor : NSColor.secondaryLabelColor,
-            .paragraphStyle: paragraph,
-        ])
+        item.isEnabled = false
         return item
     }
 
@@ -182,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showConnect() {
         if connectWindow == nil {
             connectWindow = ConnectWindowController { [weak self] in
-                self?.refresh()
+                self?.performRefresh(forceRebuild: true)
             }
         }
         NSApp.activate(ignoringOtherApps: true)
