@@ -1,6 +1,10 @@
 # PuppyBar — project rules
 
-Read [SPEC.md](SPEC.md) first. It is the single source of truth.
+Read `SPEC.md` in the repo root first. It is the single source of truth.
+
+> One rulebook, both agents. This file is the real one; `.claude/CLAUDE.md` is a
+> symlink to it, so Claude and Codex can never drift apart the way they did on
+> 2026-08-10 (the scope line said "Codex" and the test count said 91, not 132).
 
 ## Build & test
 
