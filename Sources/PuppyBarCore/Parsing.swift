@@ -7,14 +7,18 @@ public enum Parsing {
     ///
     /// The header has been observed in two shapes across Claude Code versions:
     /// an integer percentage ("38") and a 0.0–1.0 fraction ("0.38"). We accept both.
-    /// Disambiguation rule: a value <= 1.0 that was *written as a decimal* is a fraction.
-    /// A bare "1" is treated as 1 percent — the far more common reading for an integer header.
+    /// Values from zero through one are fractions, including a bare "1": Anthropic uses
+    /// that value to mean the window is fully used. A one-percent header is therefore
+    /// inherently ambiguous, but showing 1% at a hard limit is the harmful failure.
     /// Returns nil for anything unparseable rather than guessing. (EDGE-03)
     public static func utilizationPercent(_ raw: String?) -> Double? {
         guard let raw else { return nil }
         let s = raw.trimmingCharacters(in: .whitespaces)
-        guard !s.isEmpty, let value = Double(s), value.isFinite, value >= 0 else { return nil }
-        if s.contains(".") && value <= 1.0 { return value * 100 }
+        // Anthropic documents plain decimal values. Reject scientific notation and other
+        // shapes that Double accepts but whose intended scale is ambiguous.
+        guard s.range(of: #"^[0-9]+(?:\.[0-9]+)?$"#, options: .regularExpression) != nil,
+              let value = Double(s), value.isFinite, value >= 0 else { return nil }
+        if value <= 1.0 { return value * 100 }
         return value
     }
 
@@ -38,20 +42,37 @@ public enum Parsing {
     /// Build Claude's two windows from a response's headers.
     /// Header lookup is case-insensitive because URLSession's casing is not guaranteed.
     public static func anthropicWindows(headers: [String: String]) -> [Window] {
-        let h = Dictionary(headers.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { a, _ in a })
+        let fiveHours: TimeInterval = 5 * 60 * 60
+        let sevenDays: TimeInterval = 7 * 24 * 60 * 60
+        var h: [String: String] = [:]
+        var ambiguous: Set<String> = []
+        for (key, value) in headers {
+            let normalizedKey = key.lowercased()
+            if let existing = h[normalizedKey], existing != value {
+                // A Dictionary can hold keys differing only by case, but an HTTP header
+                // cannot safely have two conflicting values. Never choose one at random.
+                ambiguous.insert(normalizedKey)
+            } else {
+                h[normalizedKey] = value
+            }
+        }
+        for key in ambiguous { h.removeValue(forKey: key) }
         var windows: [Window] = []
         if let used = utilizationPercent(h["anthropic-ratelimit-unified-5h-utilization"]) {
             windows.append(Window(label: "Session (5h)", usedPercent: used,
-                                  resetsAt: resetDate(h["anthropic-ratelimit-unified-5h-reset"])))
+                                  resetsAt: resetDate(h["anthropic-ratelimit-unified-5h-reset"]),
+                                  duration: fiveHours))
         }
         if let used = utilizationPercent(h["anthropic-ratelimit-unified-7d-utilization"]) {
             windows.append(Window(label: "Weekly (7d)", usedPercent: used,
-                                  resetsAt: resetDate(h["anthropic-ratelimit-unified-7d-reset"])))
+                                  resetsAt: resetDate(h["anthropic-ratelimit-unified-7d-reset"]),
+                                  duration: sevenDays))
         }
         // Opus has its own weekly cap on some plans; show it when present.
         if let used = utilizationPercent(h["anthropic-ratelimit-unified-7d-opus-utilization"]) {
             windows.append(Window(label: "Weekly Opus (7d)", usedPercent: used,
-                                  resetsAt: resetDate(h["anthropic-ratelimit-unified-7d-opus-reset"])))
+                                  resetsAt: resetDate(h["anthropic-ratelimit-unified-7d-opus-reset"]),
+                                  duration: sevenDays))
         }
         return windows
     }
@@ -82,10 +103,12 @@ public enum Parsing {
             }
             // Label the window by its real duration when the API tells us.
             var finalLabel = label
-            if let secs = numeric(w["limit_window_seconds"]), secs > 0 {
-                finalLabel = "\(label) (\(durationLabel(secs)))"
+            let duration = numeric(w["limit_window_seconds"]).flatMap { $0 > 0 ? $0 : nil }
+            if let duration {
+                finalLabel = "\(label) (\(durationLabel(duration)))"
             }
-            windows.append(Window(label: finalLabel, usedPercent: used, resetsAt: reset))
+            windows.append(Window(label: finalLabel, usedPercent: used, resetsAt: reset,
+                                  duration: duration))
         }
         window("primary_window", label: "Weekly")
         window("secondary_window", label: "Secondary")

@@ -9,6 +9,11 @@ public enum Format {
         "\(Int(value.rounded()))%"
     }
 
+    /// Usage is always expressed in the same direction: "38% used".
+    public static func usageLabel(usedPercent: Double) -> String {
+        "\(percent(max(0, usedPercent))) used"
+    }
+
     /// A 10-cell text bar: "▓▓▓▓░░░░░░". Clamped, so 140% still draws a full bar.
     public static func bar(usedPercent: Double, cells: Int = 10) -> String {
         guard cells > 0 else { return "" }
@@ -66,4 +71,22 @@ public enum Format {
         if seconds < 3600 { return "\(seconds / 60)m ago" }
         return "\(seconds / 3600)h ago"
     }
+
+    /// Header text for the menu's most recent completed refresh.
+    public static func refreshedStatus(_ date: Date?, now: Date = Date()) -> String {
+        guard let date else { return "Not refreshed yet" }
+        return "Refreshed \(relativeAge(date, now: now))"
+    }
+
+    /// The portion of a rolling window that has passed, clamped so a clock shift never
+    /// draws beyond either end of the small time-progress bar.
+    public static func elapsedPeriodPercent(resetsAt: Date?, duration: TimeInterval?,
+                                            now: Date = Date()) -> Double? {
+        guard let resetsAt, let duration, duration.isFinite, duration > 0 else { return nil }
+        let startedAt = resetsAt.addingTimeInterval(-duration)
+        let elapsed = now.timeIntervalSince(startedAt)
+        guard elapsed.isFinite else { return nil }
+        return min(max(elapsed / duration * 100, 0), 100)
+    }
+
 }

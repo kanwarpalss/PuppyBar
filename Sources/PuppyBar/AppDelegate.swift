@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var snapshots: [String: ProviderSnapshot] = [:]
     private var isRefreshing = false
     private var isMenuOpen = false
+    private var menuNeedsRebuild = false
+    private weak var menuHeader: MenuHeaderView?
+    private weak var launchAtLoginRow: MenuActionRowView?
 
     /// Background poll interval. Each Claude poll costs ~1 Haiku token, so we stay gentle.
     private let pollInterval: TimeInterval = 300
@@ -36,11 +39,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
         rebuildMenu()
 
-        performRefresh(forceRebuild: true)
+        performRefresh()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             // A background tick shouldn't resize the dropdown while it's open on screen;
             // the numbers will simply be current the next time it's opened.
-            self?.performRefresh(forceRebuild: false)
+            self?.performRefresh()
         }
     }
 
@@ -71,14 +74,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
-        rebuildMenu() // paint instantly from whatever we already have — no network wait
+        // The menu already reflects the most recent closed-state refresh. Rebuilding here
+        // can visibly change its height while macOS is opening it, so never do that.
         if isAnyProviderStale() {
-            performRefresh(forceRebuild: true)
+            performRefresh()
         }
     }
 
     func menuDidClose(_ menu: NSMenu) {
         isMenuOpen = false
+        if menuNeedsRebuild {
+            rebuildMenu()
+            menuNeedsRebuild = false
+        }
     }
 
     private func isAnyProviderStale() -> Bool {
@@ -91,12 +99,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Polling
 
     @objc private func refreshNow() {
-        performRefresh(forceRebuild: true)
+        performRefresh()
     }
 
-    private func performRefresh(forceRebuild: Bool) {
-        guard !isRefreshing else { return }
+    @discardableResult
+    private func performRefresh() -> Bool {
+        guard !isRefreshing else { return false }
         isRefreshing = true
+        menuHeader?.setRefreshing(true)
 
         let group = DispatchGroup()
         for provider in providers {
@@ -113,13 +123,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             self.isRefreshing = false
             self.updateStatusTitle()
-            // A refresh the user asked for (open, "Refresh Now") always repaints. A quiet
-            // background tick only repaints if the menu isn't open to look at right now —
-            // otherwise the rows would resize mid-glance.
-            if forceRebuild || !self.isMenuOpen {
+            self.menuHeader?.showRefreshAge(self.latestFetch(), now: Date())
+            // Never change a menu's frames while it is on screen. Fresh data is staged and
+            // painted immediately after close, ready for the next opening.
+            if MenuUpdatePolicy.shouldRebuildAfterRefresh(menuIsOpen: self.isMenuOpen) {
                 self.rebuildMenu()
+            } else {
+                self.menuNeedsRebuild = true
             }
         }
+        return true
     }
 
     /// Just the paw — no percentage. Three windows matter equally, so no single number
@@ -135,45 +148,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         let now = Date()
 
+        let header = MenuHeaderView(refreshedAt: latestFetch(), now: now) { [weak self] in
+            self?.refreshNow()
+        }
+        menuHeader = header
+        menu.addItem(item(for: header))
+        menu.addItem(.separator())
+
         for provider in providers {
             let snapshot = snapshots[provider.name] ?? ProviderSnapshot(name: provider.name, state: .idle, fetchedAt: nil)
             let sectionItem = NSMenuItem()
-            sectionItem.view = ProviderSectionView(snapshot: snapshot, now: now)
+            let reconnect = reconnectAction(for: snapshot)
+            sectionItem.view = ProviderSectionView(snapshot: snapshot, now: now,
+                                                   reconnectTitle: reconnect?.title,
+                                                   onReconnect: reconnect?.action)
             menu.addItem(sectionItem)
-            menu.addItem(.separator())
         }
 
-        menu.addItem(footnote("Updated \(Format.relativeAge(latestFetch(), now: now))"))
-
-        let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(refreshNow), keyEquivalent: "r")
-        refreshItem.target = self
-        menu.addItem(refreshItem)
-
-        let connectTitle = Keychain.read(account: Keychain.anthropicAccount) == nil
-            ? "Connect Claude…" : "Reconnect Claude…"
-        let connectItem = NSMenuItem(title: connectTitle, action: #selector(showConnect), keyEquivalent: "")
-        connectItem.target = self
-        menu.addItem(connectItem)
-
-        let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        loginItem.target = self
-        loginItem.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
-        menu.addItem(loginItem)
-
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit PuppyBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        let loginRow = MenuActionRowView(title: "Launch at Login",
+                                         isChecked: SMAppService.mainApp.status == .enabled) { [weak self] in
+            self?.toggleLaunchAtLogin()
+        }
+        launchAtLoginRow = loginRow
+        menu.addItem(item(for: loginRow))
+
+        let quitRow = MenuActionRowView(title: "Quit PuppyBar") {
+            NSApp.terminate(nil)
+        }
+        menu.addItem(item(for: quitRow))
+    }
+
+    private func item(for view: NSView) -> NSMenuItem {
+        let item = NSMenuItem()
+        item.view = view
+        return item
+    }
+
+    private func reconnectAction(for snapshot: ProviderSnapshot) -> (title: String, action: () -> Void)? {
+        guard case .notConnected = snapshot.state else { return nil }
+        switch snapshot.name {
+        case "Claude":
+            return ("Reconnect Claude…", { [weak self] in self?.showConnect() })
+        case "ChatGPT":
+            return ("Reconnect ChatGPT…", { [weak self] in self?.reconnectChatGPT() })
+        default:
+            return nil
+        }
     }
 
     private func latestFetch() -> Date? {
         snapshots.values.compactMap(\.fetchedAt).max()
-    }
-
-    /// A true footnote — native dimmed style is the correct, expected look here,
-    /// unlike the provider content above, which the user actually needs to read.
-    private func footnote(_ text: String) -> NSMenuItem {
-        let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        return item
     }
 
     // MARK: - Actions
@@ -181,12 +207,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showConnect() {
         if connectWindow == nil {
             connectWindow = ConnectWindowController { [weak self] in
-                self?.performRefresh(forceRebuild: true)
+                self?.performRefresh()
             }
         }
         NSApp.activate(ignoringOtherApps: true)
         connectWindow?.showWindow(nil)
         connectWindow?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func reconnectChatGPT() {
+        if let chatGPT = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.chat") {
+            let configuration = NSWorkspace.OpenConfiguration()
+            NSWorkspace.shared.openApplication(at: chatGPT, configuration: configuration) { _, error in
+                if let error { self.showChatGPTReconnectHelp(error.localizedDescription) }
+            }
+        } else {
+            showChatGPTReconnectHelp(nil)
+        }
+    }
+
+    private func showChatGPTReconnectHelp(_ detail: String?) {
+        let alert = NSAlert()
+        alert.messageText = "Reconnect ChatGPT"
+        alert.informativeText = "Open the ChatGPT or Codex app and sign in. PuppyBar will use that refreshed connection the next time it checks usage."
+            + (detail.map { "\n\n\($0)" } ?? "")
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -205,6 +253,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }
-        rebuildMenu()
+        launchAtLoginRow?.isChecked = SMAppService.mainApp.status == .enabled
     }
 }

@@ -22,8 +22,7 @@ public enum MenuText {
     static let labelWidth = 17
 
     public static func section(for snapshot: ProviderSnapshot, now: Date = Date()) -> Section {
-        var header = snapshot.name.uppercased()
-        if case let .ok(plan, _, _) = snapshot.state, let plan { header += " · \(plan)" }
+        let header = snapshot.name.uppercased()
 
         var rows: [Row] = []
         switch snapshot.state {
@@ -31,11 +30,8 @@ public enum MenuText {
             rows.append(Row(primary: "Checking…"))
         case .notConnected(let message), .failed(let message):
             rows.append(Row(primary: message))
-        case .ok(_, let windows, let rateLimited):
-            if rateLimited {
-                rows.append(Row(primary: "⛔️ Limit reached right now."))
-            }
-            for window in windows {
+        case .ok(_, let windows, _):
+            for window in snapshot.displayedWindows ?? windows {
                 rows.append(row(for: window, now: now))
             }
             if windows.isEmpty {
@@ -51,7 +47,7 @@ public enum MenuText {
             : window.label + String(repeating: " ", count: labelWidth - window.label.count)
         let primary = "\(Severity.forUsed(window.usedPercent).dot)  \(label)"
             + "\(Format.bar(usedPercent: window.usedPercent))  "
-            + "\(Format.percent(window.remainingPercent)) left"
+            + Format.usageLabel(usedPercent: window.usedPercent)
         let secondary = "        \(Format.resetPhrase(window.resetsAt, now: now))"
         return Row(primary: primary, secondary: secondary)
     }
@@ -71,8 +67,8 @@ public enum MenuText {
         for snapshot in snapshots {
             switch snapshot.state {
             case .ok(_, let windows, _) where !windows.isEmpty:
-                for window in windows {
-                    lines.append("\(snapshot.name) \(window.label): \(Format.percent(window.remainingPercent)) left")
+                for window in snapshot.displayedWindows ?? windows {
+                    lines.append("\(snapshot.name) \(window.label): \(Format.usageLabel(usedPercent: window.usedPercent))")
                 }
             case .notConnected:
                 lines.append("\(snapshot.name): not connected")

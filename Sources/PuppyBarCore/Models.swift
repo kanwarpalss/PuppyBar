@@ -8,11 +8,14 @@ public struct Window: Equatable {
     public let usedPercent: Double
     /// When this window rolls over. `nil` when the provider didn't tell us.
     public let resetsAt: Date?
+    /// Total length of this rolling window. Needed to show how far through it we are.
+    public let duration: TimeInterval?
 
-    public init(label: String, usedPercent: Double, resetsAt: Date?) {
+    public init(label: String, usedPercent: Double, resetsAt: Date?, duration: TimeInterval? = nil) {
         self.label = label
         self.usedPercent = usedPercent
         self.resetsAt = resetsAt
+        self.duration = duration
     }
 
     public var remainingPercent: Double { max(0, 100 - usedPercent) }
@@ -41,10 +44,30 @@ public struct ProviderSnapshot: Equatable {
         self.fetchedAt = fetchedAt
     }
 
+    /// A Claude HTTP 429 is definitive that its current 5-hour session is exhausted,
+    /// even when the accompanying utilisation header is stale or contradictory.
+    public var displayedWindows: [Window]? {
+        guard case let .ok(_, windows, rateLimited) = state else { return nil }
+        guard name == "Claude", rateLimited else { return windows }
+        return windows.map { window in
+            guard window.label == "Session (5h)" else { return window }
+            return Window(label: window.label, usedPercent: 100, resetsAt: window.resetsAt,
+                          duration: window.duration)
+        }
+    }
+
     /// Highest utilisation across this provider's windows, for the menu bar summary.
     public var worstUsedPercent: Double? {
-        guard case let .ok(_, windows, _) = state, !windows.isEmpty else { return nil }
-        return windows.map(\.usedPercent).max()
+        guard let displayedWindows, !displayedWindows.isEmpty else { return nil }
+        return displayedWindows.map(\.usedPercent).max()
+    }
+}
+
+/// Keeps AppKit's menu geometry stable while a person is reading it. This lives in Core
+/// so the behaviour is explicit and testable without needing a running macOS menu bar.
+public enum MenuUpdatePolicy {
+    public static func shouldRebuildAfterRefresh(menuIsOpen: Bool) -> Bool {
+        !menuIsOpen
     }
 }
 
