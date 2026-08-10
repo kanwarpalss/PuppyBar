@@ -1,6 +1,6 @@
 # PuppyBar — project rules
 
-Read [SPEC.md](../SPEC.md) first. It is the single source of truth.
+Read [SPEC.md](SPEC.md) first. It is the single source of truth.
 
 ## Build & test
 
@@ -39,5 +39,5 @@ so if it is right, the menu is right. `--paw <path> [size]` writes the icon to a
 
 ## Scope
 
-Codex: session (5h) + weekly (7d). ChatGPT: weekly. That is the whole product.
+Claude: session (5h) + weekly (7d). ChatGPT: weekly. That is the whole product.
 Do not add providers, charts, or history without asking — see the Decisions Log.
