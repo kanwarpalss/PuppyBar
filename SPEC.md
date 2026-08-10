@@ -151,6 +151,13 @@ Everything is in `/Users/kanwar/Code/PuppyBar`. `./build.sh` builds; `./build.sh
 builds, copies to `/Applications`, and relaunches. `--dump` prints the menu to the
 terminal, which is the fastest way to debug without hunting for the paw.
 
+**2026-08-10 handoff:** The current branch is `codex/elapsed-period-tracks`. It contains
+the compact visual redesign and right-aligned elapsed-period tracks. The installed app was
+built from this branch. GitHub publication is intentionally deferred at KP's request: no
+remote is configured and no repository has been created. When ready, create public
+`kanwarpalss/PuppyBar`, add it as `origin`, then push this branch. The only untracked file
+is the user-owned `AGENTS.md`; it must remain outside the commit.
+
 **Next session should start by confirming K1** — whether the Claude numbers came through
 correctly once the token is connected. The parser now treats bare `1` as fully used; the
 remaining open question is only first-party live-header capture on this Mac.
