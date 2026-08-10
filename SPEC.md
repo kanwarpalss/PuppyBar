@@ -91,6 +91,7 @@ Returns `rate_limit.primary_window` with `used_percent`, `limit_window_seconds`,
 | D16 | Every quota is shown as `% used`; all footer actions use the same foreground strength | Mixing “% left” with “% used”, or dimming only Refresh and Quit | A single direction makes all three quotas comparable at a glance. Footer actions are equally interactive, so differing text weights suggested a false disabled state. |
 | D17 | Hide plan labels and animate every actionable custom row on hover | Showing a possibly stale plan name or leaving custom controls without hover feedback | The plan label misrepresented the current subscription. Custom views bypass AppKit’s standard item highlight, so each action row draws a restrained accent-tint fade on mouse enter/exit. |
 | D18 | Put refresh in a fixed PuppyBar header with its age and a reload icon; use playful provider-specific heading tints | A loose Refresh row in the footer and black provider headings | The header makes refresh discoverable without competing with settings. It invokes the existing parallel provider poll, and its refresh age tells KP when the shown values were fetched. Claude's purple and ChatGPT's teal provide lighthearted identity without changing the meaning of quota-severity colours. |
+| D20 | Published to public `kanwarpalss/PuppyBar`; `main` advanced with an ancestor-checked `git branch -f`, and `AGENTS.md` is tracked | Keeping the repo local, or advancing `main` via `git checkout main && git merge` | The repo is a personal tool with no secrets in tracked files (Keychain-only invariant verified by a pre-push scan), so public costs nothing and gives off-machine backup. `branch -f` was chosen because `main` was checked out in no worktree and the fast-forward was proven first — it advances the branch without switching KP's working directory out from under him. `AGENTS.md` is the Codex-facing twin of `.claude/CLAUDE.md`; a rule file that agents must obey belongs in the repo, not outside it (reversing the earlier "must remain outside the commit" note). |
 | D19 | Show a darker-neutral elapsed-period track at the right of the reset line when the provider supplies both reset time and period length | Add a “Time X% elapsed” line, or guess a progress bar from the reset countdown alone | The track answers how much of the 5-hour or 7-day window has passed without adding vertical clutter or confusing it with quota used. It is absent rather than invented when either input is missing or invalid. |
 
 ## 6. Current State
@@ -117,6 +118,10 @@ Returns `rate_limit.primary_window` with `used_percent`, `limit_window_seconds`,
   parallel poll. Claude and ChatGPT headings use purple and teal respectively.
 - Each quota has a compact, darker-neutral elapsed-period bar on the right of its reset
   line when both the reset time and period length are available.
+- **Published to GitHub.** `origin` = https://github.com/kanwarpalss/PuppyBar (public).
+  `main` is the default branch at `04dc0dc`, confirmed by `git ls-remote` matching
+  `git rev-parse main`. A pre-publication scan of every tracked file found no tokens,
+  keys, or `.env`; `.gitignore` keeps `.build/`, `dist/`, `*.png` and `.DS_Store` out.
 
 **Waiting on user action:**
 - Claude side shows "Not connected" until KP runs `claude setup-token` and pastes the
@@ -151,12 +156,21 @@ Everything is in `/Users/kanwar/Code/PuppyBar`. `./build.sh` builds; `./build.sh
 builds, copies to `/Applications`, and relaunches. `--dump` prints the menu to the
 terminal, which is the fastest way to debug without hunting for the paw.
 
-**2026-08-10 handoff:** The current branch is `codex/elapsed-period-tracks`. It contains
-the compact visual redesign and right-aligned elapsed-period tracks. The installed app was
-built from this branch. GitHub publication is intentionally deferred at KP's request: no
-remote is configured and no repository has been created. When ready, create public
-`kanwarpalss/PuppyBar`, add it as `origin`, then push this branch. The only untracked file
-is the user-owned `AGENTS.md`; it must remain outside the commit.
+**2026-08-10 handoff (supersedes the earlier "publication deferred" note):** PuppyBar is
+now on GitHub. `origin` is configured, `main` is the default branch, and everything —
+including the compact visual redesign, the elapsed-period tracks, and `AGENTS.md` — is
+pushed at `04dc0dc`. The working tree is clean.
+
+Branch state to be aware of: the main worktree at `/Users/kanwar/Code/PuppyBar` is still
+checked out on `codex/elapsed-period-tracks`, which now points at the same commit as
+`main`. That branch and `claude/puppybar-git-push-02eecd` are both fully merged and safe
+to delete; nothing is lost by doing so. A second worktree lives under `.claude/worktrees/`.
+
+**Next session should still start by confirming K1** — whether the Claude numbers come
+through correctly once the token is connected. The parser treats bare `1` as fully used;
+the remaining open question is first-party live-header capture on this Mac. **K5 is also
+still open**: the rendered menu has never been checked as actual pixels and needs KP's
+eyes, particularly the ⌘V fix in the Connect window.
 
 **Next session should start by confirming K1** — whether the Claude numbers came through
 correctly once the token is connected. The parser now treats bare `1` as fully used; the

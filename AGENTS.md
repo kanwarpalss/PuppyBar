@@ -5,7 +5,7 @@ Read [SPEC.md](SPEC.md) first. It is the single source of truth.
 ## Build & test
 
 ```bash
-swift run PuppyBarTests   # 91 checks — must pass before any claim of "working"
+swift run PuppyBarTests   # 132 checks — must pass before any claim of "working"
 ./build.sh                # test + build into ./dist
 ./build.sh install        # test + build + copy to /Applications + relaunch
 ```
